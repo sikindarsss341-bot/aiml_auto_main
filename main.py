@@ -482,16 +482,7 @@ def render_streamlit_app():
                     st.error(f"Pipeline Execution Failed: {str(exc)}")
 
         st.markdown("---")
-        st.markdown(
-            """
-            <div style="font-size:0.8rem; color:#8b949e; line-height:1.5;">
-                <strong>AutoML Studio</strong><br/>
-                Architecture: Streamlit UI + Scikit-Learn Engine<br/>
-                Developed by <strong>Sikindar</strong>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.caption("**AutoML Studio**  \nArchitecture: Streamlit UI + Scikit-Learn Engine  \nDeveloped by **Sikindar**")
 
     # -------------------------------------------------------------------------
     # Main Dashboard Tabs
@@ -525,41 +516,17 @@ def render_streamlit_app():
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.markdown(
-                    """
-                    <div class="custom-card">
-                        <h4>📁 Automated Preprocessing</h4>
-                        <p style="color:#8b949e; font-size:0.9rem;">
-                            Cleans columns, imputes missing values, applies label & one-hot encoding, scales features, and filters redundant predictors.
-                        </p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                with st.container(border=True):
+                    st.subheader("📁 Automated Preprocessing")
+                    st.caption("Cleans columns, imputes missing values, applies label & one-hot encoding, scales features, and filters redundant predictors.")
             with col2:
-                st.markdown(
-                    """
-                    <div class="custom-card">
-                        <h4>🤖 Multi-Model Tournament</h4>
-                        <p style="color:#8b949e; font-size:0.9rem;">
-                            Trains 9+ algorithms in parallel across Linear, Trees, Ensembles, XGBoost, LightGBM, and SVM architectures.
-                        </p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                with st.container(border=True):
+                    st.subheader("🤖 Multi-Model Tournament")
+                    st.caption("Trains 9+ algorithms in parallel across Linear, Trees, Ensembles, XGBoost, LightGBM, and SVM architectures.")
             with col3:
-                st.markdown(
-                    """
-                    <div class="custom-card">
-                        <h4>🔮 Real-time Inference</h4>
-                        <p style="color:#8b949e; font-size:0.9rem;">
-                            Performs instant prediction with automated feature scaling and class confidence probability breakdown.
-                        </p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                with st.container(border=True):
+                    st.subheader("🔮 Real-time Inference")
+                    st.caption("Performs instant prediction with automated feature scaling and class confidence probability breakdown.")
 
             if raw_df is not None:
                 st.markdown("### Loaded Dataset Quick Look")
@@ -592,20 +559,19 @@ def render_streamlit_app():
                 medals = ["🥇 1st Place (Winner)", "🥈 2nd Place", "🥉 3rd Place"]
                 for i, row in enumerate(top3[:3]):
                     with cols[i]:
-                        st.markdown(
-                            f"""
-                            <div class="custom-card">
-                                <div style="font-size:0.85rem; color:#9d8eff; font-weight:700;">{medals[i]}</div>
-                                <h3 style="margin:4px 0 10px 0;">{row.get('Model', 'Unknown')}</h3>
-                                <div style="font-size:0.95rem; color:#8b949e;">
-                                    <strong>{prim_metric}:</strong> {f"{float(row[prim_metric])*100:.2f}%" if prob_type.lower() == "classification" and prim_metric in row else row.get(prim_metric, '—')}<br/>
-                                    {f"<strong>F1 Score:</strong> {float(row.get('F1 Score', 0))*100:.2f}%" if 'F1 Score' in row else ''}
-                                    {f"<strong>RMSE:</strong> {float(row.get('RMSE', 0)):.4f}" if 'RMSE' in row else ''}
-                                </div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+                        with st.container(border=True):
+                            st.caption(medals[i])
+                            st.subheader(row.get("Model", "Unknown"))
+                            metric_val = (
+                                f"{float(row[prim_metric])*100:.2f}%"
+                                if prob_type.lower() == "classification" and prim_metric in row
+                                else str(row.get(prim_metric, "—"))
+                            )
+                            st.markdown(f"**{prim_metric}:** `{metric_val}`")
+                            if "F1 Score" in row and prob_type.lower() == "classification":
+                                st.markdown(f"**F1 Score:** `{float(row.get('F1 Score', 0))*100:.2f}%`")
+                            elif "RMSE" in row and prob_type.lower() == "regression":
+                                st.markdown(f"**RMSE:** `{float(row.get('RMSE', 0)):.4f}`")
 
             # Benchmark Chart
             comp_data = result.get("comparison", [])
@@ -960,15 +926,7 @@ def render_streamlit_app():
             prob_type = result.get("problem_type", "classification")
             target_mapping = result.get("target_label_mapping") or {}
 
-            st.markdown(
-                f"""
-                <div class="custom-card">
-                    <strong>Active Inference Model:</strong> <code>{best_model_name}</code> &nbsp;|&nbsp; 
-                    <strong>Target Variable:</strong> <code>{target_col}</code>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.info(f"**Active Inference Model:** `{best_model_name}` &nbsp;|&nbsp; **Target Variable:** `{target_col}`")
 
             # Build Form dynamically based on schema
             with st.form("prediction_form"):
