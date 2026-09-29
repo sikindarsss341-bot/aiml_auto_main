@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import importlib
+import altair as alt
 
 from backend.main import (
     _build_pipeline_result,
@@ -59,6 +60,116 @@ def execute_prediction(model, features: list[str], scaling_params: dict, problem
     mapping = target_mapping or {}
     pred_label = mapping.get(str(pred), str(pred))
     return {"prediction": pred, "prediction_label": pred_label, "probabilities": probs}
+
+
+def compute_class_distribution(series: pd.Series, target_mapping: dict = None) -> list[dict]:
+    """Computes class distribution counts and percentages, highlighting 0 and 1."""
+    clean = series.dropna()
+    if clean.empty:
+        return []
+    total = len(clean)
+    counts = clean.value_counts()
+    dist = []
+    for val, count in counts.items():
+        pct = (count / total) * 100.0
+        display_label = str(val)
+        if target_mapping:
+            for k, v in target_mapping.items():
+                if str(v) == str(val):
+                    display_label = f"{k} ({val})"
+                    break
+        dist.append({
+            "val": str(val),
+            "label": display_label,
+            "count": int(count),
+            "pct": float(pct),
+        })
+
+    def sort_key(d):
+        v = d["val"]
+        if v in ["0", "0.0"]:
+            return (0, 0)
+        if v in ["1", "1.0"]:
+            return (0, 1)
+        return (1, v)
+
+    dist.sort(key=sort_key)
+    return dist
+
+
+def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_type: str):
+    """Renders a model comparison bar chart with y-axis scaled from 50 to 100 for classification."""
+    if not comp_data:
+        st.warning("No comparison data available.")
+        return
+
+    df_chart = pd.DataFrame(comp_data)
+    if "Model" not in df_chart.columns or prim_metric not in df_chart.columns:
+        return
+
+    is_classification = str(prob_type).lower() == "classification" or prim_metric in [
+        "Accuracy", "Precision", "Recall", "F1 Score", "ROC-AUC"
+    ]
+
+    try:
+        max_val = float(df_chart[prim_metric].max())
+        if is_classification and max_val <= 1.05:
+            df_chart["Score_Pct"] = df_chart[prim_metric] * 100.0
+            chart_metric_col = "Score_Pct"
+            y_axis_title = f"{prim_metric} (%)"
+            min_score = float(df_chart["Score_Pct"].min())
+            y_min = 50.0 if min_score >= 50.0 else max(0.0, float(int(min_score // 10) * 10))
+            y_max = 100.0
+            y_ticks = list(range(int(y_min), 101, 10))
+            fmt_str = ".1f"
+        else:
+            df_chart["Score_Pct"] = df_chart[prim_metric]
+            chart_metric_col = "Score_Pct"
+            y_axis_title = prim_metric
+            y_min = float(df_chart[prim_metric].min() * 0.9)
+            y_max = float(df_chart[prim_metric].max() * 1.1)
+            y_ticks = None
+            fmt_str = ".2f"
+
+        df_chart = df_chart.sort_values(by=chart_metric_col, ascending=False).reset_index(drop=True)
+
+        y_axis_kwargs = {
+            "title": y_axis_title,
+            "scale": alt.Scale(domain=[y_min, y_max]),
+        }
+        if y_ticks:
+            y_axis_kwargs["axis"] = alt.Axis(values=y_ticks, grid=True, gridColor="#30363d")
+
+        bars = (
+            alt.Chart(df_chart)
+            .mark_bar(color="#6366f1", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+            .encode(
+                x=alt.X("Model:N", sort=None, title="Model Algorithm", axis=alt.Axis(labelAngle=-25, labelFontSize=11)),
+                y=alt.Y(f"{chart_metric_col}:Q", **y_axis_kwargs),
+                tooltip=[
+                    alt.Tooltip("Model:N", title="Algorithm"),
+                    alt.Tooltip(f"{chart_metric_col}:Q", title=y_axis_title, format=fmt_str),
+                ],
+            )
+        )
+
+        text = bars.mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-6,
+            color="#f0f6fc",
+            fontSize=11,
+            fontWeight="bold",
+        ).encode(
+            text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str)
+        )
+
+        chart = (bars + text).properties(height=380)
+        st.altair_chart(chart, use_container_width=True)
+
+    except Exception:
+        chart_df = df_chart.set_index("Model")[[prim_metric]]
+        st.bar_chart(chart_df)
 
 
 def get_api_app():
@@ -457,6 +568,15 @@ def render_streamlit_app():
             inferred_type = _infer_problem_type(df[target_col]) if target_col in df.columns else "classification"
             st.info(f"Target: **{target_col}**  \nInferred Type: **{inferred_type.title()}**")
 
+            # Show class distribution if classification
+            if inferred_type == "classification" and target_col in df.columns:
+                sidebar_dist = compute_class_distribution(df[target_col])
+                if sidebar_dist:
+                    st.caption("**Target Class Balance:**")
+                    sb_cols = st.columns(min(len(sidebar_dist), 2))
+                    for idx, d in enumerate(sidebar_dist[:2]):
+                        sb_cols[idx].metric(f"Class {d['val']}", f"{d['pct']:.1f}%", help=f"{d['count']:,} records")
+
             with st.expander("Advanced Settings"):
                 skip_svm = st.checkbox("Skip SVM/SVR for large datasets", value=len(df) > 10000)
                 selected_model_option = st.selectbox(
@@ -577,6 +697,24 @@ def render_streamlit_app():
 
             st.markdown("---")
 
+            # Target Class Balance breakdown for classification datasets
+            target_col_name = result.get("target_column")
+            if prob_type.lower() == "classification" and raw_df is not None and target_col_name in raw_df.columns:
+                clf_dist = compute_class_distribution(raw_df[target_col_name], result.get("target_label_mapping"))
+                if clf_dist:
+                    with st.container(border=True):
+                        st.subheader(f"📊 Target Class Distribution ({target_col_name})")
+                        cd_cols = st.columns(min(len(clf_dist), 4))
+                        for idx, cd in enumerate(clf_dist[:4]):
+                            with cd_cols[idx]:
+                                st.metric(
+                                    label=f"Class {cd['label']}",
+                                    value=f"{cd['pct']:.1f}%",
+                                    delta=f"{cd['count']:,} samples",
+                                    delta_color="off",
+                                )
+                                st.progress(min(max(float(cd['pct'] / 100.0), 0.0), 1.0))
+
             # Top 3 Podium
             top3 = result.get("top3", [])
             st.subheader("🏆 Top Performing Models")
@@ -603,10 +741,7 @@ def render_streamlit_app():
             comp_data = result.get("comparison", [])
             if comp_data:
                 st.subheader(f"Leaderboard Comparison ({prim_metric})")
-                df_chart = pd.DataFrame(comp_data)
-                if "Model" in df_chart.columns and prim_metric in df_chart.columns:
-                    chart_df = df_chart.set_index("Model")[[prim_metric]]
-                    st.bar_chart(chart_df)
+                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type)
 
     # -------------------------------------------------------------------------
     # TAB 2: DATASET
@@ -625,6 +760,26 @@ def render_streamlit_app():
             col_m3.metric("Missing Values", f"{missing_count:,}")
             dup_count = int(raw_df.duplicated().sum())
             col_m4.metric("Duplicate Rows", f"{dup_count:,}")
+
+            # Target Class Distribution if classification dataset
+            active_target = target_col or detect_default_target(list(raw_df.columns))
+            if active_target and active_target in raw_df.columns:
+                target_ser = raw_df[active_target]
+                if _infer_problem_type(target_ser) == "classification":
+                    t_dist = compute_class_distribution(target_ser)
+                    if t_dist:
+                        with st.container(border=True):
+                            st.subheader(f"📊 Target Class Distribution ({active_target})")
+                            cd_cols = st.columns(min(len(t_dist), 4))
+                            for idx, cd in enumerate(t_dist[:4]):
+                                with cd_cols[idx]:
+                                    st.metric(
+                                        label=f"Class {cd['val']}",
+                                        value=f"{cd['pct']:.1f}%",
+                                        delta=f"{cd['count']:,} samples",
+                                        delta_color="off",
+                                    )
+                                    st.progress(min(max(float(cd['pct'] / 100.0), 0.0), 1.0))
 
             st.markdown("### Raw Data Preview")
             st.dataframe(raw_df.head(100), use_container_width=True)
@@ -830,8 +985,7 @@ def render_streamlit_app():
                 st.dataframe(display_df, use_container_width=True)
 
                 st.subheader(f"Comparison Chart ({prim_metric})")
-                if "Model" in df_comp.columns and prim_metric in df_comp.columns:
-                    st.bar_chart(df_comp.set_index("Model")[[prim_metric]])
+                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type)
             else:
                 st.warning("No comparison data available.")
 
@@ -954,9 +1108,120 @@ def render_streamlit_app():
 
             st.info(f"**Active Inference Model:** `{best_model_name}` &nbsp;|&nbsp; **Target Variable:** `{target_col}`")
 
+            # Auto-fill State Management
+            if "prediction_form_seed" not in st.session_state:
+                st.session_state["prediction_form_seed"] = 0
+            if "prediction_autofill_values" not in st.session_state:
+                st.session_state["prediction_autofill_values"] = {}
+            if "autofill_status_msg" not in st.session_state:
+                st.session_state["autofill_status_msg"] = None
+
+            norm_cols = {str(c).strip().lower().replace(" ", "_"): c for c in raw_df.columns} if raw_df is not None else {}
+
+            def build_autofill_dict(row: pd.Series | None):
+                mapped = {}
+                for item in schema:
+                    fname = item.get("name")
+                    ftype = item.get("type")
+                    raw_col = norm_cols.get(fname)
+                    raw_val = row.get(raw_col) if (row is not None and raw_col) else None
+
+                    if ftype == "select":
+                        options = item.get("options", [])
+                        labels = [opt["label"] for opt in options]
+                        matched_label = labels[0] if labels else ""
+                        if pd.notna(raw_val):
+                            for opt in options:
+                                if str(opt["label"]).lower() == str(raw_val).lower():
+                                    matched_label = opt["label"]
+                                    break
+                                elif str(opt["value"]) == str(raw_val) or str(opt["value"]) == str(int(float(raw_val)) if isinstance(raw_val, (int, float)) else ""):
+                                    matched_label = opt["label"]
+                                    break
+                        mapped[fname] = matched_label
+                    else:
+                        def_val = float(item.get("default", 0.0))
+                        if pd.notna(raw_val):
+                            try:
+                                num_v = float(raw_val)
+                                min_v = float(item.get("min", -1e9)) if "min" in item else -1e9
+                                max_v = float(item.get("max", 1e9)) if "max" in item else 1e9
+                                mapped[fname] = max(min(num_v, max_v), min_v)
+                            except Exception:
+                                mapped[fname] = def_val
+                        else:
+                            mapped[fname] = def_val
+                return mapped
+
+            # Pre-populate on initial render if empty
+            if not st.session_state["prediction_autofill_values"]:
+                initial_row = raw_df.iloc[0] if (raw_df is not None and not raw_df.empty) else None
+                st.session_state["prediction_autofill_values"] = build_autofill_dict(initial_row)
+                if initial_row is not None:
+                    actual_val = initial_row.get(target_col, "—")
+                    st.session_state["autofill_status_msg"] = f"Values pre-loaded from dataset record #0 (Actual {target_col}: `{actual_val}`)"
+
+            # Auto-Fill Action Bar
+            st.markdown("##### ⚡ Auto-Fill Feature Values")
+            st.caption("Auto-populate input fields with real records or typical values directly from your dataset.")
+            col_af1, col_af2, col_af3, col_af4 = st.columns([1.5, 1.5, 1.5, 2.5])
+
+            with col_af1:
+                if st.button("🎲 Random Sample", use_container_width=True, help="Load features from a randomly sampled row in the dataset"):
+                    if raw_df is not None and not raw_df.empty:
+                        rand_idx = int(np.random.randint(0, len(raw_df)))
+                        rand_row = raw_df.iloc[rand_idx]
+                        st.session_state["prediction_autofill_values"] = build_autofill_dict(rand_row)
+                        st.session_state["prediction_form_seed"] += 1
+                        actual_val = rand_row.get(target_col, "—")
+                        st.session_state["autofill_status_msg"] = f"Auto-filled with values from record #{rand_idx} (Actual {target_col}: `{actual_val}`)"
+                        st.rerun()
+
+            with col_af2:
+                if st.button("⚡ First Record (#0)", use_container_width=True, help="Load features from the first record in the dataset"):
+                    if raw_df is not None and not raw_df.empty:
+                        first_row = raw_df.iloc[0]
+                        st.session_state["prediction_autofill_values"] = build_autofill_dict(first_row)
+                        st.session_state["prediction_form_seed"] += 1
+                        actual_val = first_row.get(target_col, "—")
+                        st.session_state["autofill_status_msg"] = f"Auto-filled with values from record #0 (Actual {target_col}: `{actual_val}`)"
+                        st.rerun()
+
+            with col_af3:
+                if st.button("📊 Default Medians", use_container_width=True, help="Reset all feature inputs to median/mode default values"):
+                    st.session_state["prediction_autofill_values"] = build_autofill_dict(None)
+                    st.session_state["prediction_form_seed"] += 1
+                    st.session_state["autofill_status_msg"] = "Reset all input values to feature medians and default modes"
+                    st.rerun()
+
+            with col_af4:
+                if raw_df is not None and not raw_df.empty:
+                    preview_n = min(len(raw_df), 20)
+                    row_choices = ["-- Select Dataset Record --"] + [f"Record #{i} ({target_col}: {raw_df.iloc[i].get(target_col, '—')})" for i in range(preview_n)]
+                    chosen_rec = st.selectbox(
+                        "Record Picker",
+                        options=row_choices,
+                        label_visibility="collapsed",
+                        key=f"rec_picker_{st.session_state['prediction_form_seed']}",
+                    )
+                    if chosen_rec != "-- Select Dataset Record --":
+                        chosen_idx = int(chosen_rec.split("#")[1].split(" ")[0])
+                        sel_row = raw_df.iloc[chosen_idx]
+                        st.session_state["prediction_autofill_values"] = build_autofill_dict(sel_row)
+                        st.session_state["prediction_form_seed"] += 1
+                        actual_val = sel_row.get(target_col, "—")
+                        st.session_state["autofill_status_msg"] = f"Auto-filled with values from record #{chosen_idx} (Actual {target_col}: `{actual_val}`)"
+                        st.rerun()
+
+            if st.session_state["autofill_status_msg"]:
+                st.info(st.session_state["autofill_status_msg"])
+
             # Build Form dynamically based on schema
             with st.form("prediction_form"):
                 st.subheader("Feature Input Values")
+
+                form_seed = st.session_state["prediction_form_seed"]
+                af_values = st.session_state["prediction_autofill_values"]
 
                 num_cols = 3
                 cols = st.columns(num_cols)
@@ -974,33 +1239,34 @@ def render_streamlit_app():
                             # Format select options
                             labels = [opt["label"] for opt in options]
                             values = [opt["value"] for opt in options]
-                            def_val = item.get("default", values[0] if values else 0)
-                            def_idx = values.index(def_val) if def_val in values else 0
+                            cur_label = af_values.get(fname, labels[0] if labels else "")
+                            def_idx = labels.index(cur_label) if cur_label in labels else 0
 
                             selected_label = st.selectbox(
                                 fname,
                                 options=labels,
                                 index=def_idx,
                                 help=fhelp,
-                                key=f"pred_input_{fname}",
+                                key=f"pred_input_{fname}_{form_seed}",
                             )
                             chosen_val = values[labels.index(selected_label)] if selected_label in labels else 0
                             user_inputs[fname] = chosen_val
                         else:
                             # Number input
-                            default_val = float(item.get("default", 0.0))
+                            def_val = float(item.get("default", 0.0))
+                            cur_val = float(af_values.get(fname, def_val))
                             min_val = float(item.get("min", -1e9)) if "min" in item else None
                             max_val = float(item.get("max", 1e9)) if "max" in item else None
                             step = 1.0 if item.get("step") == 1 else None
 
                             val = st.number_input(
                                 fname,
-                                value=default_val,
+                                value=cur_val,
                                 min_value=min_val,
                                 max_value=max_val,
                                 step=step,
                                 help=fhelp,
-                                key=f"pred_input_{fname}",
+                                key=f"pred_input_{fname}_{form_seed}",
                             )
                             user_inputs[fname] = val
 
