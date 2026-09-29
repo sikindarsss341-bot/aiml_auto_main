@@ -99,7 +99,7 @@ def compute_class_distribution(series: pd.Series, target_mapping: dict = None) -
     return dist
 
 
-def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_type: str, chart_key: str = "chart"):
+def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_type: str, chart_key: str = "chart", title: str = None):
     """Renders a model comparison bar chart with y-axis scaled from 50 to 100 for classification and full, unclipped model names."""
     if not comp_data:
         st.warning("No comparison data available.")
@@ -135,12 +135,15 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
 
         df_chart = df_chart.sort_values(by=chart_metric_col, ascending=False).reset_index(drop=True)
 
-        col_l, col_r = st.columns([2.5, 1.5])
-        with col_r:
+        col_head, col_ctrl = st.columns([2.6, 1.4])
+        with col_head:
+            if title:
+                st.subheader(title)
+        with col_ctrl:
             chart_view_mode = st.radio(
-                "Graph Orientation",
-                ["Vertical", "Horizontal (Full Names)"],
-                index=0,
+                "Layout",
+                ["Horizontal (Full Names)", "Vertical Bars"],
+                index=0,  # Default to Horizontal so model names are 100% visible without angle clipping!
                 horizontal=True,
                 key=f"chart_mode_{chart_key}",
             )
@@ -156,11 +159,11 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
                         sort=None,
                         title=None,
                         axis=alt.Axis(
-                            labelFontSize=12,
-                            labelColor="#e6edf3",
+                            labelFontSize=13,
+                            labelColor="#f0f6fc",
                             labelLimit=0,
                             labelFontWeight="bold",
-                            labelPadding=10,
+                            labelPadding=12,
                         ),
                     ),
                     x=alt.X(
@@ -181,11 +184,14 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
                 baseline="middle",
                 dx=6,
                 color="#f0f6fc",
-                fontSize=11,
+                fontSize=12,
                 fontWeight="bold",
             ).encode(text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str))
 
-            chart = (h_bars + h_text).properties(height=max(340, len(df_chart) * 40))
+            chart = (h_bars + h_text).properties(
+                height=max(360, len(df_chart) * 44),
+                autosize=alt.AutoSizeParams(type="pad", contains="padding"),
+            )
             st.altair_chart(chart, use_container_width=True)
 
         else:
@@ -205,11 +211,11 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
                         sort=None,
                         title=None,
                         axis=alt.Axis(
-                            labelAngle=-45,
+                            labelAngle=-40,
                             labelLimit=0,
                             labelOverlap=False,
                             labelFontSize=12,
-                            labelColor="#e6edf3",
+                            labelColor="#f0f6fc",
                             labelFontWeight="bold",
                             labelPadding=8,
                         ),
@@ -231,7 +237,10 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
                 fontWeight="bold",
             ).encode(text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str))
 
-            chart = (v_bars + v_text).properties(height=450, padding={"bottom": 45})
+            chart = (v_bars + v_text).properties(
+                height=480,
+                autosize=alt.AutoSizeParams(type="pad", contains="padding"),
+            )
             st.altair_chart(chart, use_container_width=True)
 
     except Exception:
@@ -536,14 +545,11 @@ def render_streamlit_app():
 
         st.subheader("1. Dataset Source")
 
-        # Available sample datasets
+        # Available sample datasets (Titanic only)
         sample_datasets = {}
         titanic_csv = ROOT_DIR / "titanic.csv"
         if titanic_csv.exists():
             sample_datasets["Titanic Dataset (Classification - 891 rows)"] = titanic_csv
-        for p in sorted(UPLOAD_DIR.glob("*.csv")):
-            if p.name != "titanic.csv":
-                sample_datasets[f"Upload: {p.name}"] = p
 
         has_samples = len(sample_datasets) > 0
         input_modes = ["Upload File", "Use Sample Dataset"] if has_samples else ["Upload File"]
@@ -640,19 +646,16 @@ def render_streamlit_app():
                 sidebar_dist = compute_class_distribution(df[target_col])
                 if sidebar_dist:
                     st.caption("**Target Class Balance:**")
-                    cards_html = ""
-                    for d in sidebar_dist[:2]:
-                        cards_html += f"""
-                        <div style="flex: 1; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 6px; text-align: center;">
-                            <div style="color: #8b949e; font-size: 0.72rem; font-weight: 600; text-transform: uppercase;">Class {d['val']}</div>
-                            <div style="color: #58a6ff; font-size: 1.3rem; font-weight: 800; margin: 3px 0;">{d['pct']:.1f}%</div>
-                            <div style="color: #8b949e; font-size: 0.7rem;">{d['count']:,} rows</div>
-                        </div>
-                        """
-                    st.markdown(
-                        f'<div style="display: flex; gap: 8px; margin-bottom: 12px;">{cards_html}</div>',
-                        unsafe_allow_html=True,
-                    )
+                    sb_cols = st.columns(min(len(sidebar_dist), 2))
+                    for idx, d in enumerate(sidebar_dist[:2]):
+                        with sb_cols[idx]:
+                            with st.container(border=True):
+                                st.caption(f"Class {d['val']}")
+                                st.markdown(
+                                    f"<div style='color:#58a6ff; font-size:1.25rem; font-weight:700; margin:-4px 0 2px 0;'>{d['pct']:.1f}%</div>",
+                                    unsafe_allow_html=True,
+                                )
+                                st.caption(f"{d['count']:,} rows")
 
             with st.expander("Advanced Settings"):
                 skip_svm = st.checkbox("Skip SVM/SVR for large datasets", value=len(df) > 10000)
@@ -817,8 +820,9 @@ def render_streamlit_app():
             # Benchmark Chart
             comp_data = result.get("comparison", [])
             if comp_data:
-                st.subheader(f"Leaderboard Comparison ({prim_metric})")
-                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type, chart_key="dash")
+                render_leaderboard_bar_chart(
+                    comp_data, prim_metric, prob_type, chart_key="dash", title=f"Leaderboard Comparison ({prim_metric})"
+                )
 
     # -------------------------------------------------------------------------
     # TAB 2: DATASET
@@ -1061,8 +1065,9 @@ def render_streamlit_app():
 
                 st.dataframe(display_df, use_container_width=True)
 
-                st.subheader(f"Comparison Chart ({prim_metric})")
-                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type, chart_key="comp")
+                render_leaderboard_bar_chart(
+                    comp_data, prim_metric, prob_type, chart_key="comp", title=f"Comparison Chart ({prim_metric})"
+                )
             else:
                 st.warning("No comparison data available.")
 
