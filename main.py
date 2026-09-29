@@ -667,7 +667,11 @@ def render_streamlit_app():
             numeric_cols = raw_df.select_dtypes(include=np.number)
             if numeric_cols.shape[1] > 1:
                 with st.expander("Numeric Correlation Matrix"):
-                    st.dataframe(numeric_cols.corr().style.background_gradient(cmap="coolwarm", axis=None), use_container_width=True)
+                    corr_df = numeric_cols.corr()
+                    try:
+                        st.dataframe(corr_df.style.background_gradient(cmap="coolwarm", axis=None), use_container_width=True)
+                    except Exception:
+                        st.dataframe(corr_df, use_container_width=True)
 
     # -------------------------------------------------------------------------
     # TAB 3: PREPROCESSING
