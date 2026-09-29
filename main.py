@@ -657,15 +657,19 @@ def render_streamlit_app():
             run_btn = st.button("🚀 Run AutoML Pipeline", type="primary", use_container_width=True)
 
             if run_btn:
+                # Persistent evaluation notice visible throughout the training process
+                training_notice = st.empty()
+                training_notice.info("🔍 **Evaluating models and selecting the best performer…**")
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
                 def streamlit_progress_callback(percent: int, message: str):
                     progress_bar.progress(min(max(int(percent), 0), 100))
-                    status_text.text(f"[{percent}%] {message}...")
+                    status_text.caption(f"[{percent}%] {message}")
+                    training_notice.info("🔍 **Evaluating models and selecting the best performer…**")
 
                 try:
-                    with st.spinner("Executing AutoML Pipeline..."):
+                    with st.spinner("🔍 Evaluating models and selecting the best performer…"):
                         result = _build_pipeline_result(
                             job_id=str(uuid.uuid4()),
                             file_path=st.session_state["active_file_path"],
@@ -677,9 +681,11 @@ def render_streamlit_app():
                         st.session_state["pipeline_result"] = result
                         MODEL_STATE.clear()
                         MODEL_STATE.update(result)
+                        training_notice.empty()
                         status_text.text("Pipeline completed successfully!")
                         st.success("AutoML Pipeline finished!")
                 except Exception as exc:
+                    training_notice.empty()
                     status_text.empty()
                     st.error(f"Pipeline Execution Failed: {str(exc)}")
 

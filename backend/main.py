@@ -420,14 +420,14 @@ def _build_pipeline_result(
     # Callbacks are identical for both problem types — define once
     def training_progress(completed: int, total: int, name: str) -> None:
         progress = 70 + int((completed / max(total, 1)) * 12)
-        _emit_progress(progress_callback, progress, f"Training model: {name}")
+        _emit_progress(progress_callback, progress, f"🔍 Evaluating models and selecting the best performer… ({name})")
 
     def tuning_progress(message: str) -> None:
-        _emit_progress(progress_callback, 85, message)
+        _emit_progress(progress_callback, 85, f"🔍 Evaluating models and selecting the best performer… ({message})")
 
     # Train all models
     if problem_type == "classification":
-        _emit_progress(progress_callback, 70, "Training classification models")
+        _emit_progress(progress_callback, 70, "🔍 Evaluating models and selecting the best performer…")
         trained_models, predictions = train_models(
             X_train, y_train, X_test,
             progress_callback=training_progress,
@@ -437,7 +437,7 @@ def _build_pipeline_result(
         from sklearn.metrics import accuracy_score
         baseline_scores = {name: float(accuracy_score(y_test, pred)) for name, pred in predictions.items()}
     else:
-        _emit_progress(progress_callback, 70, "Training regression models")
+        _emit_progress(progress_callback, 70, "🔍 Evaluating models and selecting the best performer…")
         trained_models, predictions = train_regression_models(
             X_train, y_train, X_test,
             progress_callback=training_progress,
@@ -449,7 +449,7 @@ def _build_pipeline_result(
 
     # Tune top 2 — same for both problem types
     if selected_model_name is not None and selected_model_name in trained_models:
-        _emit_progress(progress_callback, 83, f"Tuning selected model: {selected_model_name}")
+        _emit_progress(progress_callback, 83, f"🔍 Evaluating models and selecting the best performer… (Tuning: {selected_model_name})")
         trained_models, tuning_summary = screen_and_tune(
             trained_models={selected_model_name: trained_models[selected_model_name]},
             X_train=X_train,
@@ -460,7 +460,7 @@ def _build_pipeline_result(
             baseline_scores=baseline_scores,
         )
     else:
-        _emit_progress(progress_callback, 83, "Screening top 2 for hyperparameter tuning")
+        _emit_progress(progress_callback, 83, "🔍 Evaluating models and selecting the best performer… (Screening top models)")
         trained_models, tuning_summary = screen_and_tune(
             trained_models=trained_models,
             X_train=X_train,
@@ -472,7 +472,7 @@ def _build_pipeline_result(
         )
 
     # Re-generate predictions from (possibly) tuned models, then evaluate
-    _emit_progress(progress_callback, 88, "Evaluating tuned models")
+    _emit_progress(progress_callback, 88, "🔍 Evaluating models and selecting the best performer… (Evaluating metrics)")
     predictions = {name: model.predict(X_test) for name, model in trained_models.items()}
 
     if problem_type == "classification":
@@ -492,7 +492,7 @@ def _build_pipeline_result(
         primary_metric = "R2"
         leaderboard_metrics = ["R2", "RMSE"]
 
-    _emit_progress(progress_callback, 92, "Comparing models")
+    _emit_progress(progress_callback, 92, "🔍 Evaluating models and selecting the best performer… (Selecting winner)")
     best_model_name = str(best["Model"])
     best_model_object = trained_models.get(best_model_name)
 
