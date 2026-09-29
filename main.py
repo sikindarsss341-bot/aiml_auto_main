@@ -13,6 +13,8 @@ import pandas as pd
 import streamlit as st
 import importlib
 import altair as alt
+import io
+import joblib
 
 from backend.main import (
     _build_pipeline_result,
@@ -1373,6 +1375,125 @@ def render_streamlit_app():
                             p_cols[idx].progress(min(max(float(prob_val), 0.0), 1.0))
                 except Exception as exc:
                     st.error(f"Inference error: {str(exc)}")
+
+            # -----------------------------------------------------------------
+            # Model Export & Download Section ("At Last")
+            # -----------------------------------------------------------------
+            st.markdown("---")
+            st.subheader("💾 Export & Download Trained Models")
+            st.caption("Download production-ready serialized model artifacts (.joblib or .pkl) for external deployment, API hosting, or offline inference.")
+
+            # Collect available models from training tournament
+            all_trained = result.get("trained_models", {})
+            if not all_trained and result.get("best_model_object") is not None:
+                all_trained = {best_model_name: result.get("best_model_object")}
+
+            if all_trained:
+                model_names = list(all_trained.keys())
+                # Ensure the Best Model appears first as the default
+                sorted_model_names = []
+                if best_model_name in model_names:
+                    sorted_model_names.append(best_model_name)
+                for m in model_names:
+                    if m not in sorted_model_names:
+                        sorted_model_names.append(m)
+
+                # Format options with distinct badges
+                labels_dict = {}
+                for m in sorted_model_names:
+                    if m == best_model_name:
+                        labels_dict[m] = f"🏆 {m} (Recommended - Best Model)"
+                    else:
+                        labels_dict[m] = f"⚡ {m}"
+
+                col_dl1, col_dl2 = st.columns([2.5, 1.5])
+                with col_dl1:
+                    selected_download_model_name = st.selectbox(
+                        "Select Model to Export",
+                        options=sorted_model_names,
+                        format_func=lambda m: labels_dict.get(m, m),
+                        index=0,  # Default is the Best Model
+                        help="Choose which algorithm's trained model artifact to download",
+                    )
+                with col_dl2:
+                    export_format = st.selectbox(
+                        "File Format",
+                        options=["Joblib (.joblib)", "Pickle (.pkl)"],
+                        index=0,
+                        help="Joblib is recommended for Scikit-Learn models with NumPy arrays",
+                    )
+
+                selected_model_obj = all_trained.get(selected_download_model_name)
+
+                if selected_model_obj is not None:
+                    # Metric score lookup from leaderboard comparison
+                    comp_lookup = {r.get("Model"): r for r in result.get("comparison", [])}
+                    model_stats = comp_lookup.get(selected_download_model_name, {})
+                    prim_metric_name = result.get("primary_metric", "Accuracy")
+                    metric_score = model_stats.get(prim_metric_name)
+
+                    with st.container(border=True):
+                        c_meta1, c_meta2, c_meta3, c_meta4 = st.columns(4)
+                        c_meta1.metric("Selected Algorithm", selected_download_model_name)
+                        if metric_score is not None:
+                            metric_display = (
+                                f"{float(metric_score)*100:.2f}%"
+                                if prob_type.lower() == "classification"
+                                else f"{float(metric_score):.4f}"
+                            )
+                            c_meta2.metric(f"Score ({prim_metric_name})", metric_display)
+                        else:
+                            c_meta2.metric("Score", "Trained")
+                        c_meta3.metric("Features Included", len(features))
+                        c_meta4.metric("Problem Type", prob_type.title())
+
+                        # Prepare binary model buffer
+                        buf = io.BytesIO()
+                        is_pkl = "pickle" in export_format.lower()
+                        file_ext = "pkl" if is_pkl else "joblib"
+                        clean_filename = selected_download_model_name.lower().replace(" ", "_").replace("-", "_")
+                        download_filename = f"{clean_filename}_{prob_type.lower()}.{file_ext}"
+
+                        if is_pkl:
+                            import pickle
+                            pickle.dump(selected_model_obj, buf)
+                        else:
+                            joblib.dump(selected_model_obj, buf)
+                        buf.seek(0)
+
+                        st.download_button(
+                            label=f"📥 Download {selected_download_model_name} (.{file_ext})",
+                            data=buf.getvalue(),
+                            file_name=download_filename,
+                            mime="application/octet-stream",
+                            type="primary",
+                            use_container_width=True,
+                        )
+
+                        with st.expander("🐍 How to load and use this model in Python"):
+                            loader_lib = "pickle" if is_pkl else "joblib"
+                            features_preview = str(features[:6]) if len(features) > 6 else str(features)
+                            st.code(
+                                f"""import {loader_lib}
+import pandas as pd
+
+# 1. Load the trained model from disk
+with open("{download_filename}", "rb") as f:
+    model = {loader_lib}.load(f)
+
+# 2. Prepare sample feature data (Expected features: {features_preview})
+sample_data = pd.DataFrame([
+    # [Insert feature values here matching columns: {features_preview}]
+], columns={features})
+
+# 3. Generate predictions
+predictions = model.predict(sample_data)
+print("Prediction:", predictions)
+""",
+                                language="python",
+                            )
+            else:
+                st.info("Train models by clicking 'Run AutoML Pipeline' to enable model export.")
 
 
 # -----------------------------------------------------------------------------

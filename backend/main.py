@@ -545,6 +545,7 @@ def _build_pipeline_result(
         "best_model": best_model_summary,
         "best_model_name": best_model_name,
         "best_model_object": best_model_object,
+        "trained_models": trained_models,
         "feature_names": input_feature_names,
         "selected_feature_names": selected_feature_names,
         "feature_schema": _to_serializable(feature_schema),
