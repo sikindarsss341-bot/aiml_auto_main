@@ -15,6 +15,9 @@ import importlib
 import altair as alt
 import io
 import joblib
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from backend.main import (
     _build_pipeline_result,
@@ -100,7 +103,7 @@ def compute_class_distribution(series: pd.Series, target_mapping: dict = None) -
 
 
 def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_type: str, chart_key: str = "chart", title: str = None):
-    """Renders a model comparison bar chart with y-axis scaled from 50 to 100 for classification and full, unclipped model names."""
+    """Renders a clean, production-quality model comparison bar chart with algorithm names clearly visible on the X-axis and Accuracy (%) on the Y-axis."""
     if not comp_data:
         st.warning("No comparison data available.")
         return
@@ -124,124 +127,97 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
             y_max = 100.0
             y_ticks = list(range(int(y_min), 101, 10))
             fmt_str = ".1f"
+        elif is_classification:
+            df_chart["Score_Pct"] = df_chart[prim_metric]
+            chart_metric_col = "Score_Pct"
+            y_axis_title = f"{prim_metric} (%)" if "%" not in prim_metric else prim_metric
+            min_score = float(df_chart["Score_Pct"].min())
+            y_min = 50.0 if min_score >= 50.0 else max(0.0, float(int(min_score // 10) * 10))
+            y_max = 100.0
+            y_ticks = list(range(int(y_min), 101, 10))
+            fmt_str = ".1f"
         else:
             df_chart["Score_Pct"] = df_chart[prim_metric]
             chart_metric_col = "Score_Pct"
             y_axis_title = prim_metric
-            y_min = float(df_chart[prim_metric].min() * 0.9)
-            y_max = float(df_chart[prim_metric].max() * 1.1)
+            min_score = float(df_chart[prim_metric].min())
+            max_score = float(df_chart[prim_metric].max())
+            span = max(max_score - min_score, 0.01)
+            y_min = float(min_score - span * 0.1)
+            y_max = float(max_score + span * 0.15)
             y_ticks = None
-            fmt_str = ".2f"
+            fmt_str = ".4f"
 
         df_chart = df_chart.sort_values(by=chart_metric_col, ascending=False).reset_index(drop=True)
 
-        col_head, col_ctrl = st.columns([2.6, 1.4])
-        with col_head:
-            if title:
-                st.subheader(title)
-        with col_ctrl:
-            chart_view_mode = st.radio(
-                "Layout",
-                ["Horizontal (Full Names)", "Vertical Bars"],
-                index=0,  # Default to Horizontal so model names are 100% visible without angle clipping!
-                horizontal=True,
-                key=f"chart_mode_{chart_key}",
+        if title:
+            st.subheader(title)
+
+        models = df_chart["Model"].tolist()
+        scores = df_chart[chart_metric_col].tolist()
+
+        # Clean, dark-themed Matplotlib vertical bar chart
+        plt.rcParams["font.family"] = "sans-serif"
+        plt.rcParams["font.sans-serif"] = ["Segoe UI", "DejaVu Sans", "Arial"]
+        plt.style.use("dark_background")
+
+        chart_width = max(10.0, len(models) * 1.15)
+        fig, ax = plt.subplots(figsize=(chart_width, 5.2), dpi=150)
+        fig.patch.set_facecolor("#0e1117")
+        ax.set_facecolor("#161b22")
+
+        x_pos = np.arange(len(models))
+        bar_colors = ["#4f46e5" if i == 0 else "#6366f1" for i in range(len(models))]
+        edge_colors = ["#a5b4fc" if i == 0 else "#818cf8" for i in range(len(models))]
+
+        bars = ax.bar(
+            x_pos,
+            scores,
+            color=bar_colors,
+            edgecolor=edge_colors,
+            width=0.55,
+            linewidth=1.2,
+            zorder=3,
+        )
+
+        ax.set_ylim(y_min, y_max)
+        ax.set_ylabel(y_axis_title, color="#f0f6fc", fontsize=12, fontweight="bold", labelpad=12)
+
+        if y_ticks:
+            ax.set_yticks(y_ticks)
+
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(models, rotation=25, ha="right", color="#f0f6fc", fontsize=10.5, fontweight="600")
+
+        ax.tick_params(axis="x", colors="#8b949e", length=5, width=1)
+        ax.tick_params(axis="y", colors="#8b949e", labelsize=10)
+
+        ax.grid(axis="y", color="#30363d", linestyle="--", linewidth=0.8, alpha=0.8, zorder=0)
+
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        ax.spines["left"].set_color("#30363d")
+        ax.spines["bottom"].set_color("#30363d")
+
+        # Display exact score values above each vertical bar
+        for bar in bars:
+            h = bar.get_height()
+            val_txt = f"{h:.1f}%" if is_classification else f"{h:{fmt_str}}"
+            ax.annotate(
+                val_txt,
+                xy=(bar.get_x() + bar.get_width() / 2, h),
+                xytext=(0, 6),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                color="#ffffff",
+                fontsize=10.5,
+                fontweight="bold",
             )
 
-        if chart_view_mode == "Horizontal (Full Names)":
-            df_h = df_chart.iloc[::-1].reset_index(drop=True)
-            h_bars = (
-                alt.Chart(df_h)
-                .mark_bar(color="#6366f1", cornerRadiusTopRight=6, cornerRadiusBottomRight=6)
-                .encode(
-                    y=alt.Y(
-                        "Model:N",
-                        sort=None,
-                        title=None,
-                        axis=alt.Axis(
-                            labelFontSize=13,
-                            labelColor="#f0f6fc",
-                            labelLimit=0,
-                            labelFontWeight="bold",
-                            labelPadding=12,
-                        ),
-                    ),
-                    x=alt.X(
-                        f"{chart_metric_col}:Q",
-                        scale=alt.Scale(domain=[y_min, y_max]),
-                        title=y_axis_title,
-                        axis=alt.Axis(values=y_ticks, grid=True, gridColor="#30363d") if y_ticks else alt.Axis(grid=True),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("Model:N", title="Algorithm"),
-                        alt.Tooltip(f"{chart_metric_col}:Q", title=y_axis_title, format=fmt_str),
-                    ],
-                )
-            )
-
-            h_text = h_bars.mark_text(
-                align="left",
-                baseline="middle",
-                dx=6,
-                color="#f0f6fc",
-                fontSize=12,
-                fontWeight="bold",
-            ).encode(text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str))
-
-            chart = (h_bars + h_text).properties(
-                height=max(360, len(df_chart) * 44),
-                autosize=alt.AutoSizeParams(type="pad", contains="padding"),
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-        else:
-            y_axis_kwargs = {
-                "title": y_axis_title,
-                "scale": alt.Scale(domain=[y_min, y_max]),
-            }
-            if y_ticks:
-                y_axis_kwargs["axis"] = alt.Axis(values=y_ticks, grid=True, gridColor="#30363d")
-
-            v_bars = (
-                alt.Chart(df_chart)
-                .mark_bar(color="#6366f1", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
-                .encode(
-                    x=alt.X(
-                        "Model:N",
-                        sort=None,
-                        title=None,
-                        axis=alt.Axis(
-                            labelAngle=-40,
-                            labelLimit=0,
-                            labelOverlap=False,
-                            labelFontSize=12,
-                            labelColor="#f0f6fc",
-                            labelFontWeight="bold",
-                            labelPadding=8,
-                        ),
-                    ),
-                    y=alt.Y(f"{chart_metric_col}:Q", **y_axis_kwargs),
-                    tooltip=[
-                        alt.Tooltip("Model:N", title="Algorithm"),
-                        alt.Tooltip(f"{chart_metric_col}:Q", title=y_axis_title, format=fmt_str),
-                    ],
-                )
-            )
-
-            v_text = v_bars.mark_text(
-                align="center",
-                baseline="bottom",
-                dy=-6,
-                color="#f0f6fc",
-                fontSize=11,
-                fontWeight="bold",
-            ).encode(text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str))
-
-            chart = (v_bars + v_text).properties(
-                height=480,
-                autosize=alt.AutoSizeParams(type="pad", contains="padding"),
-            )
-            st.altair_chart(chart, use_container_width=True)
+        fig.tight_layout(pad=1.2)
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
 
     except Exception:
         chart_df = df_chart.set_index("Model")[[prim_metric]]
