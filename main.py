@@ -97,8 +97,8 @@ def compute_class_distribution(series: pd.Series, target_mapping: dict = None) -
     return dist
 
 
-def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_type: str):
-    """Renders a model comparison bar chart with y-axis scaled from 50 to 100 for classification."""
+def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_type: str, chart_key: str = "chart"):
+    """Renders a model comparison bar chart with y-axis scaled from 50 to 100 for classification and full, unclipped model names."""
     if not comp_data:
         st.warning("No comparison data available.")
         return
@@ -133,39 +133,104 @@ def render_leaderboard_bar_chart(comp_data: list[dict], prim_metric: str, prob_t
 
         df_chart = df_chart.sort_values(by=chart_metric_col, ascending=False).reset_index(drop=True)
 
-        y_axis_kwargs = {
-            "title": y_axis_title,
-            "scale": alt.Scale(domain=[y_min, y_max]),
-        }
-        if y_ticks:
-            y_axis_kwargs["axis"] = alt.Axis(values=y_ticks, grid=True, gridColor="#30363d")
-
-        bars = (
-            alt.Chart(df_chart)
-            .mark_bar(color="#6366f1", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
-            .encode(
-                x=alt.X("Model:N", sort=None, title="Model Algorithm", axis=alt.Axis(labelAngle=-25, labelFontSize=11)),
-                y=alt.Y(f"{chart_metric_col}:Q", **y_axis_kwargs),
-                tooltip=[
-                    alt.Tooltip("Model:N", title="Algorithm"),
-                    alt.Tooltip(f"{chart_metric_col}:Q", title=y_axis_title, format=fmt_str),
-                ],
+        col_l, col_r = st.columns([2.5, 1.5])
+        with col_r:
+            chart_view_mode = st.radio(
+                "Graph Orientation",
+                ["Vertical", "Horizontal (Full Names)"],
+                index=0,
+                horizontal=True,
+                key=f"chart_mode_{chart_key}",
             )
-        )
 
-        text = bars.mark_text(
-            align="center",
-            baseline="bottom",
-            dy=-6,
-            color="#f0f6fc",
-            fontSize=11,
-            fontWeight="bold",
-        ).encode(
-            text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str)
-        )
+        if chart_view_mode == "Horizontal (Full Names)":
+            df_h = df_chart.iloc[::-1].reset_index(drop=True)
+            h_bars = (
+                alt.Chart(df_h)
+                .mark_bar(color="#6366f1", cornerRadiusTopRight=6, cornerRadiusBottomRight=6)
+                .encode(
+                    y=alt.Y(
+                        "Model:N",
+                        sort=None,
+                        title=None,
+                        axis=alt.Axis(
+                            labelFontSize=12,
+                            labelColor="#e6edf3",
+                            labelLimit=0,
+                            labelFontWeight="bold",
+                            labelPadding=10,
+                        ),
+                    ),
+                    x=alt.X(
+                        f"{chart_metric_col}:Q",
+                        scale=alt.Scale(domain=[y_min, y_max]),
+                        title=y_axis_title,
+                        axis=alt.Axis(values=y_ticks, grid=True, gridColor="#30363d") if y_ticks else alt.Axis(grid=True),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Model:N", title="Algorithm"),
+                        alt.Tooltip(f"{chart_metric_col}:Q", title=y_axis_title, format=fmt_str),
+                    ],
+                )
+            )
 
-        chart = (bars + text).properties(height=380)
-        st.altair_chart(chart, use_container_width=True)
+            h_text = h_bars.mark_text(
+                align="left",
+                baseline="middle",
+                dx=6,
+                color="#f0f6fc",
+                fontSize=11,
+                fontWeight="bold",
+            ).encode(text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str))
+
+            chart = (h_bars + h_text).properties(height=max(340, len(df_chart) * 40))
+            st.altair_chart(chart, use_container_width=True)
+
+        else:
+            y_axis_kwargs = {
+                "title": y_axis_title,
+                "scale": alt.Scale(domain=[y_min, y_max]),
+            }
+            if y_ticks:
+                y_axis_kwargs["axis"] = alt.Axis(values=y_ticks, grid=True, gridColor="#30363d")
+
+            v_bars = (
+                alt.Chart(df_chart)
+                .mark_bar(color="#6366f1", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                .encode(
+                    x=alt.X(
+                        "Model:N",
+                        sort=None,
+                        title=None,
+                        axis=alt.Axis(
+                            labelAngle=-45,
+                            labelLimit=0,
+                            labelOverlap=False,
+                            labelFontSize=12,
+                            labelColor="#e6edf3",
+                            labelFontWeight="bold",
+                            labelPadding=8,
+                        ),
+                    ),
+                    y=alt.Y(f"{chart_metric_col}:Q", **y_axis_kwargs),
+                    tooltip=[
+                        alt.Tooltip("Model:N", title="Algorithm"),
+                        alt.Tooltip(f"{chart_metric_col}:Q", title=y_axis_title, format=fmt_str),
+                    ],
+                )
+            )
+
+            v_text = v_bars.mark_text(
+                align="center",
+                baseline="bottom",
+                dy=-6,
+                color="#f0f6fc",
+                fontSize=11,
+                fontWeight="bold",
+            ).encode(text=alt.Text(f"{chart_metric_col}:Q", format=fmt_str))
+
+            chart = (v_bars + v_text).properties(height=450, padding={"bottom": 45})
+            st.altair_chart(chart, use_container_width=True)
 
     except Exception:
         chart_df = df_chart.set_index("Model")[[prim_metric]]
@@ -573,9 +638,19 @@ def render_streamlit_app():
                 sidebar_dist = compute_class_distribution(df[target_col])
                 if sidebar_dist:
                     st.caption("**Target Class Balance:**")
-                    sb_cols = st.columns(min(len(sidebar_dist), 2))
-                    for idx, d in enumerate(sidebar_dist[:2]):
-                        sb_cols[idx].metric(f"Class {d['val']}", f"{d['pct']:.1f}%", help=f"{d['count']:,} records")
+                    cards_html = ""
+                    for d in sidebar_dist[:2]:
+                        cards_html += f"""
+                        <div style="flex: 1; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 6px; text-align: center;">
+                            <div style="color: #8b949e; font-size: 0.72rem; font-weight: 600; text-transform: uppercase;">Class {d['val']}</div>
+                            <div style="color: #58a6ff; font-size: 1.3rem; font-weight: 800; margin: 3px 0;">{d['pct']:.1f}%</div>
+                            <div style="color: #8b949e; font-size: 0.7rem;">{d['count']:,} rows</div>
+                        </div>
+                        """
+                    st.markdown(
+                        f'<div style="display: flex; gap: 8px; margin-bottom: 12px;">{cards_html}</div>',
+                        unsafe_allow_html=True,
+                    )
 
             with st.expander("Advanced Settings"):
                 skip_svm = st.checkbox("Skip SVM/SVR for large datasets", value=len(df) > 10000)
@@ -741,7 +816,7 @@ def render_streamlit_app():
             comp_data = result.get("comparison", [])
             if comp_data:
                 st.subheader(f"Leaderboard Comparison ({prim_metric})")
-                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type)
+                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type, chart_key="dash")
 
     # -------------------------------------------------------------------------
     # TAB 2: DATASET
@@ -985,7 +1060,7 @@ def render_streamlit_app():
                 st.dataframe(display_df, use_container_width=True)
 
                 st.subheader(f"Comparison Chart ({prim_metric})")
-                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type)
+                render_leaderboard_bar_chart(comp_data, prim_metric, prob_type, chart_key="comp")
             else:
                 st.warning("No comparison data available.")
 
