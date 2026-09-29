@@ -23,7 +23,8 @@ from backend.main import (
 # -----------------------------------------------------------------------------
 # Configuration and Constants
 # -----------------------------------------------------------------------------
-UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
+ROOT_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json"}
 
@@ -357,14 +358,34 @@ def render_streamlit_app():
 
         st.subheader("1. Dataset Source")
 
-        # Check existing uploads in uploads/ directory for quick selection
-        existing_csvs = list(UPLOAD_DIR.glob("*.csv"))
+        # Available sample datasets
+        sample_datasets = {}
+        titanic_csv = ROOT_DIR / "titanic.csv"
+        if titanic_csv.exists():
+            sample_datasets["Titanic Dataset (Classification - 891 rows)"] = titanic_csv
+        for p in sorted(UPLOAD_DIR.glob("*.csv")):
+            if p.name != "titanic.csv":
+                sample_datasets[f"Upload: {p.name}"] = p
+
+        has_samples = len(sample_datasets) > 0
+        input_modes = ["Upload File", "Use Sample Dataset"] if has_samples else ["Upload File"]
+
         source_mode = st.radio(
             "Select Input Method",
-            ["Upload File", "Use Sample Dataset"] if existing_csvs else ["Upload File"],
+            input_modes,
             index=0,
             horizontal=True,
         )
+
+        # Track mode changes to reset state cleanly
+        if "prev_source_mode" not in st.session_state:
+            st.session_state["prev_source_mode"] = source_mode
+        elif st.session_state["prev_source_mode"] != source_mode:
+            st.session_state["prev_source_mode"] = source_mode
+            st.session_state["active_file_path"] = None
+            st.session_state["active_filename"] = None
+            st.session_state["raw_df"] = None
+            st.session_state["pipeline_result"] = None
 
         uploaded_file = None
         if source_mode == "Upload File":
@@ -397,14 +418,19 @@ def render_streamlit_app():
                         st.session_state["pipeline_result"] = None
                     except Exception as exc:
                         st.error(f"Error reading dataset: {exc}")
-        elif existing_csvs:
-            sample_options = {p.name: str(p) for p in existing_csvs}
-            selected_sample = st.selectbox("Choose sample dataset", list(sample_options.keys()))
-            if selected_sample:
-                sample_path = sample_options[selected_sample]
-                if st.session_state["active_file_path"] != sample_path:
-                    st.session_state["active_file_path"] = sample_path
-                    st.session_state["active_filename"] = selected_sample
+            elif has_samples and st.session_state["raw_df"] is None:
+                st.caption("Tip: Switch to **Use Sample Dataset** above to test with the Titanic dataset.")
+        elif has_samples:
+            selected_sample_label = st.selectbox(
+                "Choose sample dataset",
+                options=list(sample_datasets.keys()),
+                help="Preloaded datasets for instant benchmarking",
+            )
+            if selected_sample_label:
+                sample_path = sample_datasets[selected_sample_label]
+                if st.session_state["active_file_path"] != str(sample_path):
+                    st.session_state["active_file_path"] = str(sample_path)
+                    st.session_state["active_filename"] = sample_path.name
                     try:
                         st.session_state["raw_df"] = pd.read_csv(sample_path)
                         st.session_state["pipeline_result"] = None

@@ -113,7 +113,9 @@ aiml_auto-main/
 |-- api_server.py                     # Standalone FastAPI API server entry point
 |-- main.py                           # Streamlit dashboard application
 |-- README.md
-`-- runtime.txt
+|-- requirements.txt                  # Python dependencies
+|-- runtime.txt
+`-- titanic.csv                       # Built-in sample dataset (Titanic passenger survival)
 ```
 
 ---
@@ -163,8 +165,8 @@ http://localhost:8000/docs
 ## Usage Workflow
 
 1. Open the Streamlit dashboard in your browser.
-2. Upload your tabular dataset (.csv, .xlsx, .xls, or .json) via the sidebar or select an existing sample.
-3. Confirm or change the Target Variable from the dropdown.
+2. Select "Use Sample Dataset" to test instantly with the built-in Titanic dataset (891 records), or select "Upload File" to ingest your own tabular dataset (.csv, .xlsx, .xls, or .json).
+3. Confirm or change the Target Variable from the dropdown (automatically defaults to "Survived" for Titanic).
 4. Click "Run AutoML Pipeline".
 5. Explore results across the dashboard tabs:
    - Dashboard: High-level KPI metrics and podium winners.
